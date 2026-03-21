@@ -1,0 +1,1576 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trip Planner Local</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@300,0&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <style>
+    .leaflet-container { background: #0a0a0a; }
+    .mat { font-family: "Material Symbols Outlined", sans-serif; font-size: 18px; line-height: 1; }
+    .day-grid-wrap { position: relative; border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; overflow: hidden; background: #121216; }
+    .day-grid-bg { position: absolute; inset: 0; pointer-events: none; }
+    .day-hour-row { position: absolute; left: 0; right: 0; border-top: 1px solid rgba(255,255,255,0.08); }
+    .day-quarter-row { position: absolute; left: 58px; right: 0; border-top: 1px dashed rgba(255,255,255,0.05); }
+    .day-time-col { position: absolute; left: 0; top: 0; bottom: 0; width: 58px; background: rgba(0,0,0,0.35); border-right: 1px solid rgba(255,255,255,0.08); }
+    .day-content-col { position: relative; margin-left: 58px; }
+    .day-label { position: absolute; left: 8px; transform: translateY(-50%); font-size: 11px; color: rgba(255,255,255,0.55); }
+   .event-block { 
+      position: absolute; left: 10px; right: 10px; 
+      border-radius: 8px; 
+      border: 1px solid rgba(255,255,255,0.06);
+      border-left: 4px solid #38bdf8;
+      background: rgba(15, 23, 42, 0.95);
+      box-shadow: 0 4px 10px rgba(0,0,0,0.4); 
+      padding: 6px 10px; 
+      overflow: hidden; 
+      display: flex;
+      flex-direction: column;
+      transition: background 0.2s, border-color 0.2s;
+      z-index: 10;
+    }
+    .event-block:hover {
+      background: rgba(30, 41, 59, 0.98);
+      border-color: rgba(255,255,255,0.15);
+    }
+    .travel-block { 
+      position: absolute; left: 28px; right: 10px; 
+      border-left: 2px dashed rgba(255,255,255,0.3);
+      background: transparent;
+      padding: 0 0 0 12px; 
+      font-size: 11px; 
+      color: rgba(255,255,255,0.5); 
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .event-resize { 
+      position: absolute; left: 0; right: 0; height: 10px; 
+      background: transparent; 
+      cursor: ns-resize; 
+      display: flex; justify-content: center; align-items: center;
+      opacity: 0; 
+      transition: opacity 0.2s;
+    }
+    .event-block:hover .event-resize { opacity: 1; }
+    .event-resize::after {
+      content: ""; width: 20px; height: 3px; border-radius: 2px; 
+      background: rgba(255,255,255,0.3); 
+    }
+    .event-resize-top { top: 0; align-items: flex-start; padding-top: 2px; }
+    .event-resize-bottom { bottom: 0; align-items: flex-end; padding-bottom: 2px; }
+    .event-conflict { box-shadow: inset 0 0 0 2px rgba(248,113,113,0.7); }
+    
+    /* --- СТИЛИ ДЛЯ БАНКА ИДЕЙ (DRAG & DROP) --- */
+    .idea-item { cursor: grab; }
+    .idea-item:active { cursor: grabbing; }
+    .drag-over { background: rgba(56, 189, 248, 0.1) !important; outline: 2px dashed #38bdf8; }
+
+  /* --- МАГИЯ ДЛЯ ИДЕАЛЬНОГО PDF --- */
+    .pdf-exporting form,
+    .pdf-exporting button,
+    .pdf-exporting input,
+    .pdf-exporting select,
+    .pdf-exporting .event-resize {
+      display: none !important;
+    }
+    .pdf-exporting section:has(form) {
+      display: none !important; 
+    }
+    .pdf-exporting #tripPanel {
+      width: 1100px !important;
+      max-width: 1100px !important;
+    }
+    .pdf-exporting .leaflet-control-container {
+      display: none !important;
+    }
+    .pdf-exporting .relative, 
+    .pdf-exporting img,
+    .pdf-exporting .event-block,
+    .pdf-exporting .rounded-xl,
+    .pdf-exporting #dayTimeline {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    .pdf-exporting .ideas-section { display: none !important; }
+      </style>
+</head>
+<body class="bg-black text-white min-h-screen">
+  <div class="max-w-7xl mx-auto p-4 md:p-6">
+    <header class="mb-6">
+      <h1 class="text-3xl font-bold">Trip Planner</h1>
+      <p class="text-white/60 mt-1">Простой офлайн-планировщик: события, расходы, маршрут, шкала дня. Все хранится локально в браузере.</p>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <aside class="lg:col-span-1 space-y-4">
+        <section class="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-semibold text-lg">Поездки</h2>
+            <span id="tripCount" class="text-xs text-white/50"></span>
+          </div>
+          <div id="tripList" class="space-y-2"></div>
+        </section>
+
+        <section class="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <h3 class="font-semibold mb-3">Новая поездка</h3>
+          <form id="tripForm" class="space-y-2">
+            <input id="tripTitle" required placeholder="Название поездки" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none focus:border-blue-400" />
+            <input id="tripDestination" required placeholder="Город / страна" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none focus:border-blue-400" />
+            <div class="grid grid-cols-2 gap-2">
+              <input id="tripStart" required type="date" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none [color-scheme:dark]" />
+              <input id="tripEnd" required type="date" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none [color-scheme:dark]" />
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <select id="tripCurrency" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none">
+                <option>USD</option><option>EUR</option><option>GBP</option><option>RUB</option><option>JPY</option>
+              </select>
+              <input id="tripBudget" type="number" min="0" step="0.01" placeholder="Бюджет" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none focus:border-blue-400" />
+            </div>
+            <button class="w-full rounded-xl bg-blue-600 hover:bg-blue-500 py-2 font-semibold">Создать поезку</button>
+          </form>
+        </section>
+
+        <section class="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <h3 class="font-semibold mb-2">Данные</h3>
+          <div class="grid grid-cols-2 gap-2">
+            <button id="exportBtn" class="rounded-xl bg-white/10 hover:bg-white/20 py-2 text-sm">Экспорт JSON</button>
+            <label class="rounded-xl bg-white/10 hover:bg-white/20 py-2 text-sm text-center cursor-pointer">Импорт JSON<input id="importInput" type="file" accept=".json,application/json" class="hidden" /></label>
+          </div>
+          <label class="block mt-2 rounded-xl bg-white/10 hover:bg-white/20 py-2 text-sm text-center cursor-pointer">Импорт ICS (.ics)<input id="importIcsInput" type="file" accept=".ics,text/calendar" class="hidden" /></label>
+          <button id="clearAllBtn" class="w-full mt-2 rounded-xl bg-red-600/80 hover:bg-red-500 py-2 text-sm">Очистить всё</button>
+          <p class="text-xs text-white/50 mt-2">Подсказка: экспортируйте периодически как бэкап.</p>
+        </section>
+      </aside>
+
+      <main class="lg:col-span-2 space-y-4">
+        <section id="emptyState" class="rounded-2xl border border-dashed border-white/20 p-6 text-white/70">
+          Выберите поездку слева или создайте новую.
+        </section>
+
+        <section id="tripPanel" class="hidden space-y-4">
+          <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div class="flex flex-wrap gap-2 items-center justify-between">
+              <div>
+                <h2 id="panelTitle" class="text-2xl font-bold"></h2>
+                <p id="panelMeta" class="text-white/60 text-sm"></p>
+              </div>
+              
+              <div class="flex gap-2">
+                <button id="exportPdfBtn" class="rounded-xl bg-green-600/80 hover:bg-green-500 px-3 py-2 text-sm text-white transition-colors">Скачать PDF</button>
+                <button id="deleteTripBtn" class="rounded-xl bg-red-600/80 hover:bg-red-500 px-3 py-2 text-sm transition-colors">Удалить поездку</button>
+              </div>            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mt-4">
+              <div class="rounded-xl bg-white/10 p-3"><div class="text-xs text-white/60">Бюджет</div><div id="budgetValue" class="text-xl font-semibold"></div></div>
+              <div class="rounded-xl bg-white/10 p-3"><div class="text-xs text-white/60">Потрачено</div><div id="spentValue" class="text-xl font-semibold"></div></div>
+              <div class="rounded-xl bg-white/10 p-3"><div class="text-xs text-white/60">Остаток</div><div id="leftValue" class="text-xl font-semibold"></div></div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <section class="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <h3 class="font-semibold mb-3">Добавить событие</h3>
+              <form id="eventForm" class="space-y-2">
+                <input id="eventTitle" required placeholder="Событие (рейс, отель, встреча)" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+                <div class="grid grid-cols-3 gap-2">
+                  <input id="eventDate" required type="date" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none [color-scheme:dark]" />
+                  <input id="eventStartTime" required type="time" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none [color-scheme:dark]" />
+                  <input id="eventEndTime" required type="time" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none [color-scheme:dark]" />
+                </div>
+               <div class="grid grid-cols-1 gap-2">
+                  <input id="eventType" list="eventTypesList" required placeholder="Категория (выберите или введите)" autocomplete="off" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none focus:border-blue-400" />
+                  <datalist id="eventTypesList">
+                    <option value="Авиа"></option>
+                    <option value="Поезд"></option>
+                    <option value="Метро"></option>
+                    <option value="Автобус"></option>
+                    <option value="Такси"></option>
+                    <option value="Аренда авто"></option>
+                    <option value="Паром"></option>
+                    <option value="Отель"></option>
+                    <option value="Апартаменты"></option>
+                    <option value="Ресторан"></option>
+                    <option value="Кафе"></option>
+                    <option value="Бар"></option>
+                    <option value="Фастфуд"></option>
+                    <option value="Музей"></option>
+                    <option value="Экскурсия"></option>
+                    <option value="Парк"></option>
+                    <option value="Шоппинг"></option>
+                    <option value="Театр"></option>
+                    <option value="Пляж"></option>
+                    <option value="Встреча"></option>
+                    <option value="Другое"></option>
+                  </datalist>
+                </div>
+                <input id="eventCover" placeholder="Обложка события (URL картинки)" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+                <div class="grid grid-cols-2 gap-2">
+                  <input id="eventLocationLabel" placeholder="Локация (напр. CDG Airport)" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+                  <input id="eventCoords" placeholder="Координаты lat,lng" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+                </div>
+                <input id="eventTravelTime" type="number" min="0" placeholder="Время на дорогу ДО события (мин)" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+                
+                <textarea id="eventNotes" rows="2" placeholder="Заметки" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none"></textarea>
+                <button class="w-full rounded-xl bg-violet-600 hover:bg-violet-500 py-2 font-semibold">Добавить событие</button>
+              </form>
+            </section>
+
+            <section class="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <h3 class="font-semibold mb-3">Добавить расход</h3>
+              <form id="expenseForm" class="space-y-2">
+                <input id="expenseNote" required placeholder="Описание расхода" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+                <div class="grid grid-cols-2 gap-2">
+                  <input id="expenseDate" required type="date" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none [color-scheme:dark]" />
+                  <input id="expenseAmount" required min="0" step="0.01" type="number" placeholder="Сумма" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  
+                  <input id="expenseCategory" list="expenseCategoryList" required placeholder="Категория трат" autocomplete="off" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none focus:border-blue-400" />
+                  <datalist id="expenseCategoryList">
+                    <option value="Еда и рестораны"></option>
+                    <option value="Транспорт"></option>
+                    <option value="Проживание"></option>
+                    <option value="Авиабилеты"></option>
+                    <option value="Развлечения"></option>
+                    <option value="Шоппинг"></option>
+                    <option value="Сувениры"></option>
+                    <option value="Связь и интернет"></option>
+                    <option value="Другое"></option>
+                  </datalist>
+
+                  <select id="expenseCurrency" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none">
+                    <option>USD</option><option>EUR</option><option>GBP</option><option>RUB</option><option>JPY</option>
+                  </select>
+                </div>
+                <button class="w-full rounded-xl bg-blue-600 hover:bg-blue-500 py-2 font-semibold">Сохранить расход</button>
+              </form>
+            </section>
+          </div>
+          <section class="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <h3 class="font-semibold mb-3">Маршрут поездки (карта)</h3>
+            <p class="text-white/60 text-sm mb-3">Клик по карте автоматически вставляет координаты в поле нового события.</p>
+            <div id="mapEmpty" class="text-white/50 text-sm mb-2 hidden">Добавьте минимум 2 события с координатами, чтобы увидеть маршрут.</div>
+            <div id="tripMap" class="h-72 rounded-xl border border-white/10 overflow-hidden"></div>
+          </section>
+
+          <section class="ideas-section rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold flex items-center gap-2">
+                <span class="mat text-yellow-400">lightbulb</span>
+                Банк идей (Drag & Drop)
+              </h3>
+            </div>
+            <form id="ideaForm" class="flex gap-2 mb-3">
+              <input id="ideaTitle" required placeholder="Например: Шавухи поесть, в рестик сходить..." class="flex-1 rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none focus:border-blue-400" />
+              <button class="rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 font-semibold">Добавить</button>
+            </form>
+            <div id="ideasList" class="flex flex-wrap gap-2 min-h-[50px] p-2 border border-dashed border-white/20 rounded-xl bg-black/20 transition-colors">
+              </div>
+          </section>
+
+          <section class="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div class="flex flex-wrap gap-2 items-center justify-between mb-3">
+              <h3 class="font-semibold">Шкала дня</h3>
+              <div class="flex gap-2 items-center">
+                <button id="prevDayBtn" class="rounded-xl bg-white/10 hover:bg-white/20 px-1.5 py-1.5 flex items-center justify-center text-white/70 hover:text-white transition-colors" title="Предыдущий день">
+                  <span class="mat">chevron_left</span>
+                </button>
+
+                <input id="dayViewDate" type="date" class="rounded-xl bg-white/10 border border-white/10 px-3 py-1.5 outline-none [color-scheme:dark]" />
+
+                <button id="nextDayBtn" class="rounded-xl bg-white/10 hover:bg-white/20 px-1.5 py-1.5 flex items-center justify-center text-white/70 hover:text-white transition-colors" title="Следующий день">
+                  <span class="mat">chevron_right</span>
+                </button>
+                
+                <div class="flex items-center gap-2 mr-2">
+                  <span class="mat text-white/50 text-sm">zoom_out</span>
+                  <input id="zoomSlider" type="range" min="30" max="150" value="64" class="w-20 accent-blue-500 cursor-pointer" title="Масштаб времени" />
+                  <span class="mat text-white/50 text-sm">zoom_in</span>
+                </div>
+
+                <select id="dayPeriodMode" class="rounded-xl bg-white/10 border border-white/10 px-2 py-1.5 text-sm outline-none">
+                  <option value="day">День</option>
+                  <option value="week">Неделя</option>
+                </select>
+                <select id="dayViewMode" class="rounded-xl bg-white/10 border border-white/10 px-2 py-1.5 text-sm outline-none">
+                  <option value="full">00-24</option>
+                  <option value="auto">Авто</option>
+                </select>
+                <button id="todayBtn" class="rounded-xl bg-white/10 hover:bg-white/20 px-3 py-1.5 text-sm">Сегодня</button>
+                <button id="copyDayBtn" class="rounded-xl bg-blue-600/80 hover:bg-blue-500 px-3 py-1.5 text-sm flex items-center transition-colors" title="Скопировать план в текст"><span class="mat" style="font-size: 16px">content_copy</span></button>
+                
+              </div>            </div>
+            <div id="dayTimeline" class="space-y-2"></div>
+          </section>
+
+          <section class="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <h3 class="font-semibold mb-3">Таймлайн событий</h3>
+            <div id="eventList" class="space-y-2"></div>
+          </section>
+
+          <section class="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <h3 class="font-semibold mb-3">Расходы</h3>
+            <div id="expenseList" class="space-y-2"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="eventEditModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 items-center justify-center p-4">
+    <div class="w-full max-w-xl rounded-2xl bg-zinc-900 border border-white/10 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-semibold text-lg">Редактировать событие</h3>
+        <button id="closeEditModalBtn" class="rounded-lg bg-white/10 hover:bg-white/20 px-2 py-1">✕</button>
+      </div>
+      <form id="editEventForm" class="space-y-2">
+        <input id="editEventId" type="hidden" />
+        <input id="editEventTitle" required placeholder="Название" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+        <div class="grid grid-cols-3 gap-2">
+          <input id="editEventDate" required type="date" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none [color-scheme:dark]" />
+          <input id="editEventStart" required type="time" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none [color-scheme:dark]" />
+          <input id="editEventEnd" required type="time" class="rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none [color-scheme:dark]" />
+        </div>
+        
+        <input id="editEventType" list="eventTypesList" required placeholder="Категория" autocomplete="off" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none focus:border-blue-400" />
+        
+        <input id="editEventLocation" placeholder="Локация" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+        <input id="editEventCoords" placeholder="lat,lng" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+        <input id="editEventCover" placeholder="URL обложки" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+        
+        <input id="editEventTravelTime" type="number" min="0" placeholder="Время на дорогу ДО события (мин)" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none" />
+        
+        <textarea id="editEventNotes" rows="2" placeholder="Заметки" class="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 outline-none"></textarea>
+        <button class="w-full rounded-xl bg-blue-600 hover:bg-blue-500 py-2 font-semibold">Сохранить изменения</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const STORAGE_KEY = "tripPlannerLocalV3";
+    const FX_TO_USD = { USD: 1, EUR: 1.09, GBP: 1.28, RUB: 0.011, JPY: 0.0067 };
+    let currentTimelineZoom = 64;
+    let state = loadState();
+    let map = null;
+    let markersLayer = null;
+    let routeLine = null;
+
+    const tripListEl = document.getElementById("tripList");
+    const tripCountEl = document.getElementById("tripCount");
+    const emptyStateEl = document.getElementById("emptyState");
+    const tripPanelEl = document.getElementById("tripPanel");
+    const panelTitleEl = document.getElementById("panelTitle");
+    const panelMetaEl = document.getElementById("panelMeta");
+    const budgetValueEl = document.getElementById("budgetValue");
+    const spentValueEl = document.getElementById("spentValue");
+    const leftValueEl = document.getElementById("leftValue");
+    const eventListEl = document.getElementById("eventList");
+    const expenseListEl = document.getElementById("expenseList");
+    const mapEmptyEl = document.getElementById("mapEmpty");
+    const dayTimelineEl = document.getElementById("dayTimeline");
+    const dayViewDateEl = document.getElementById("dayViewDate");
+    const dayViewModeEl = document.getElementById("dayViewMode");
+    const dayPeriodModeEl = document.getElementById("dayPeriodMode");
+    const eventEditModalEl = document.getElementById("eventEditModal");
+
+    document.getElementById("tripForm").addEventListener("submit", onCreateTrip);
+    document.getElementById("zoomSlider").addEventListener("input", (e) => {
+      currentTimelineZoom = Number(e.target.value);
+      renderDayTimeline(getSelectedTrip());
+    });
+    
+    // --- ДОБАВЛЕН ОБРАБОТЧИК ДЛЯ БАНКА ИДЕЙ ---
+    document.getElementById("ideaForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const trip = getSelectedTrip();
+      if (!trip) return;
+      const title = document.getElementById("ideaTitle").value.trim();
+      if (!title) return;
+      
+      trip.ideas.push({ id: createId(), title, durationMin: 60 });
+      saveState();
+      e.target.reset();
+      renderPanel();
+    });
+
+    document.getElementById("eventForm").addEventListener("submit", onCreateEvent);
+    document.getElementById("expenseForm").addEventListener("submit", onCreateExpense);
+    document.getElementById("deleteTripBtn").addEventListener("click", onDeleteTrip);
+    document.getElementById("todayBtn").addEventListener("click", (e) => {
+      e.preventDefault();
+      dayViewDateEl.value = toDateInput(new Date());
+      renderDayTimeline(getSelectedTrip());
+    });
+    document.getElementById("copyDayBtn").addEventListener("click", (e) => {
+      e.preventDefault();
+      const trip = getSelectedTrip();
+      if (!trip) return;
+      const day = dayViewDateEl.value || trip.startDate;
+      if (!day) return;
+
+      const dayStartEpoch = new Date(`${day}T00:00:00`).getTime() / 60000;
+      const dayEndEpoch = dayStartEpoch + 24 * 60;
+      
+      const dayEvents = trip.events
+        .filter((ev) => eventEndEpochMin(ev) > dayStartEpoch && eventStartEpochMin(ev) < dayEndEpoch)
+        .sort((a, b) => eventStartEpochMin(a) - eventStartEpochMin(b));
+
+      if (!dayEvents.length) {
+        alert("На этот день нет событий для копирования!");
+        return;
+      }
+
+      const dateObj = new Date(day);
+      const dayString = isNaN(dateObj) ? day : dateObj.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+      let textStr = `📅 План на ${dayString}:\n\n`;
+      
+      dayEvents.forEach(ev => {
+        const start = getEventStart(ev);
+        const emoji = getEventEmoji(ev.type);
+        textStr += `${emoji} ${start} — ${ev.title}\n`;
+        if (ev.locationLabel) textStr += `   📍 ${ev.locationLabel}\n`;
+      });
+
+      navigator.clipboard.writeText(textStr).then(() => {
+        const btn = document.getElementById("copyDayBtn");
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<span class="mat" style="font-size: 16px">check</span>';
+        btn.classList.replace("bg-blue-600/80", "bg-green-500");
+        setTimeout(() => {
+          btn.innerHTML = originalHtml;
+          btn.classList.replace("bg-green-500", "bg-blue-600/80");
+        }, 2000);
+      }).catch(() => alert("Не удалось скопировать текст"));
+    });
+    function shiftDay(offsetDays) {
+      const trip = getSelectedTrip();
+      if (!trip) return;
+      let currentDateStr = dayViewDateEl.value || trip.startDate || toDateInput(new Date());
+      const d = new Date(currentDateStr);
+      d.setDate(d.getDate() + offsetDays);
+      dayViewDateEl.value = toDateInput(d);
+      renderDayTimeline(trip);
+    }
+
+    document.getElementById("prevDayBtn").addEventListener("click", (e) => {
+      e.preventDefault();
+      shiftDay(-1);
+    });
+
+    document.getElementById("nextDayBtn").addEventListener("click", (e) => {
+      e.preventDefault();
+      shiftDay(1);
+    });
+    
+    dayViewDateEl.addEventListener("change", () => renderDayTimeline(getSelectedTrip()));
+    dayViewModeEl.addEventListener("change", () => renderDayTimeline(getSelectedTrip()));
+    dayPeriodModeEl.addEventListener("change", () => renderDayTimeline(getSelectedTrip()));
+    document.getElementById("exportBtn").addEventListener("click", onExportData);
+    document.getElementById("importInput").addEventListener("change", onImportData);
+    document.getElementById("importIcsInput").addEventListener("change", onImportIcs);
+    document.getElementById("clearAllBtn").addEventListener("click", onClearAll);
+    document.getElementById("closeEditModalBtn").addEventListener("click", closeEditModal);
+    document.getElementById("editEventForm").addEventListener("submit", onSaveEditedEvent);
+    eventEditModalEl.addEventListener("click", (e) => {
+      if (e.target === eventEditModalEl) closeEditModal();
+    });
+
+    render();
+
+    function createId() {
+      return Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
+
+    function toDateInput(date) {
+      const d = new Date(date);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem("tripPlannerLocalV1");
+        if (!raw) return { trips: [], selectedTripId: null };
+        return normalizeState(JSON.parse(raw));
+      } catch {
+        return { trips: [], selectedTripId: null };
+      }
+    }
+
+    function normalizeState(parsed) {
+      if (!parsed || !Array.isArray(parsed.trips)) return { trips: [], selectedTripId: null };
+      parsed.trips.forEach((trip) => {
+        trip.events = Array.isArray(trip.events) ? trip.events : [];
+        trip.expenses = Array.isArray(trip.expenses) ? trip.expenses : [];
+        trip.ideas = Array.isArray(trip.ideas) ? trip.ideas : []; // <--- НОВАЯ СТРОКА ДЛЯ ИДЕЙ
+        trip.events.forEach((e) => {
+          if (!("coords" in e)) e.coords = null;
+          if (!("cover" in e)) e.cover = "";
+          if (!("locationLabel" in e)) e.locationLabel = "";
+          if (!("travelTimeMin" in e)) e.travelTimeMin = 0; 
+          if (!("startTime" in e)) e.startTime = e.time || "09:00";
+          if (!("endTime" in e)) {
+            const start = timeToMinutes(e.startTime);
+            const duration = Number(e.durationMin || 60);
+            e.endTime = minutesToTime(start + Math.max(10, duration));
+          }
+        });
+        trip.expenses.forEach((x) => {
+          if (!("currency" in x)) x.currency = trip.currency || "USD";
+        });
+      });
+      return parsed;
+    }
+
+    function saveState() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function getSelectedTrip() {
+      return state.trips.find((t) => t.id === state.selectedTripId) || null;
+    }
+
+    function money(value, currency) {
+      return new Intl.NumberFormat("ru-RU", { style: "currency", currency }).format(Number(value || 0));
+    }
+
+    function convertCurrency(amount, fromCurrency, toCurrency) {
+      const from = FX_TO_USD[fromCurrency] || 1;
+      const to = FX_TO_USD[toCurrency] || 1;
+      const usd = Number(amount || 0) * from;
+      return usd / to;
+    }
+
+    function escapeHtml(value) {
+      return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+    }
+
+    function parseCoords(raw) {
+      if (!raw) return null;
+      const parts = raw.split(",").map((x) => x.trim());
+      if (parts.length !== 2) return null;
+      const lat = Number(parts[0]);
+      const lng = Number(parts[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+      return { lat, lng };
+    }
+
+    function timeToMinutes(timeStr) {
+      const [h, m] = (timeStr || "00:00").split(":").map(Number);
+      return h * 60 + m;
+    }
+
+    function minutesToTime(totalMin) {
+      const h = Math.floor(totalMin / 60) % 24;
+      const m = totalMin % 60;
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    }
+
+    function formatDuration(min) {
+      const v = Math.max(0, Math.round(min));
+      const h = Math.floor(v / 60);
+      const m = v % 60;
+      if (!h) return `${m} мин`;
+      if (!m) return `${h} ч`;
+      return `${h} ч ${m} мин`;
+    }
+
+    function getEventStart(event) {
+      return event.startTime || event.time || "09:00";
+    }
+
+    function getEventStartDate(event) {
+      return event.date;
+    }
+
+    function getEventEndDate(event) {
+      if (event.endDate) return event.endDate;
+      const start = timeToMinutes(getEventStart(event));
+      const end = timeToMinutes(getEventEnd(event));
+      if (end <= start) {
+        const d = new Date(event.date);
+        d.setDate(d.getDate() + 1);
+        return toDateInput(d);
+      }
+      return event.date;
+    }
+
+    function getEventEnd(event) {
+      if (event.endTime) return event.endTime;
+      const start = timeToMinutes(getEventStart(event));
+      const duration = Number(event.durationMin || 60);
+      return minutesToTime(start + Math.max(10, duration));
+    }
+
+    function eventStartEpochMin(event) {
+      return new Date(`${getEventStartDate(event)}T${getEventStart(event)}:00`).getTime() / 60000;
+    }
+
+    function eventEndEpochMin(event) {
+      return new Date(`${getEventEndDate(event)}T${getEventEnd(event)}:00`).getTime() / 60000;
+    }
+
+    function eventTypeTheme(type) {
+      const mapTheme = {
+        flight: { icon: "flight_takeoff", chip: "bg-blue-500/20 text-blue-300" },
+        hotel: { icon: "bed", chip: "bg-orange-500/20 text-orange-300" },
+        food: { icon: "restaurant", chip: "bg-emerald-500/20 text-emerald-300" },
+        transit: { icon: "train", chip: "bg-violet-500/20 text-violet-300" },
+        activity: { icon: "local_activity", chip: "bg-pink-500/20 text-pink-300" },
+        other: { icon: "event", chip: "bg-white/20 text-white/80" },
+        "Авиа": { icon: "flight_takeoff", chip: "bg-blue-500/20 text-blue-300" },
+        "Поезд": { icon: "train", chip: "bg-violet-500/20 text-violet-300" },
+        "Метро": { icon: "subway", chip: "bg-fuchsia-500/20 text-fuchsia-300" },
+        "Автобус": { icon: "directions_bus", chip: "bg-indigo-500/20 text-indigo-300" },
+        "Такси": { icon: "local_taxi", chip: "bg-yellow-400/20 text-yellow-200" },
+        "Аренда авто": { icon: "car_rental", chip: "bg-cyan-500/20 text-cyan-300" },
+        "Паром": { icon: "directions_boat", chip: "bg-sky-500/20 text-sky-300" },
+        "Отель": { icon: "bed", chip: "bg-orange-500/20 text-orange-300" },
+        "Апартаменты": { icon: "apartment", chip: "bg-amber-600/20 text-amber-400" },
+        "Ресторан": { icon: "restaurant", chip: "bg-emerald-500/20 text-emerald-300" },
+        "Кафе": { icon: "local_cafe", chip: "bg-amber-500/20 text-amber-300" },
+        "Бар": { icon: "local_bar", chip: "bg-purple-500/20 text-purple-300" },
+        "Фастфуд": { icon: "fastfood", chip: "bg-red-500/20 text-red-300" },
+        "Музей": { icon: "museum", chip: "bg-teal-500/20 text-teal-300" },
+        "Экскурсия": { icon: "tour", chip: "bg-green-500/20 text-green-300" },
+        "Парк": { icon: "park", chip: "bg-lime-500/20 text-lime-300" },
+        "Шоппинг": { icon: "shopping_bag", chip: "bg-pink-500/20 text-pink-300" },
+        "Театр": { icon: "theaters", chip: "bg-rose-500/20 text-rose-300" },
+        "Пляж": { icon: "beach_access", chip: "bg-cyan-400/20 text-cyan-200" },
+        "Встреча": { icon: "groups", chip: "bg-blue-400/20 text-blue-200" },
+        "Другое": { icon: "event", chip: "bg-white/20 text-white/80" }
+      };
+      
+      return mapTheme[type] || { icon: "label", chip: "bg-yellow-500/20 text-yellow-300" };
+    }
+function getEventEmoji(type) {
+      const emojis = {
+        flight: "✈️", "Авиа": "✈️",
+        hotel: "🏨", "Отель": "🏨", "Апартаменты": "🏨",
+        food: "🍽️", "Ресторан": "🍽️", "Кафе": "☕", "Бар": "🍸", "Фастфуд": "🍔",
+        transit: "🚆", "Поезд": "🚆", "Метро": "🚇", "Автобус": "🚌", "Паром": "⛴️",
+        "Такси": "🚕", "Аренда авто": "🚗",
+        activity: "🎫", "Музей": "🏛️", "Экскурсия": "🚶", "Парк": "🌳",
+        "Шоппинг": "🛍️", "Театр": "🎭", "Пляж": "🏖️",
+        "Встреча": "🤝", "Другое": "📌"
+      };
+      return emojis[type] || "📌";
+    }
+    function formatDayLabel(dateStr) {
+      if (!dateStr) return "";
+      try {
+        return new Date(dateStr).toLocaleDateString("ru-RU", { weekday: "short", day: "2-digit", month: "2-digit" });
+      } catch {
+        return dateStr;
+      }
+    }
+
+    function findConflicts(events) {
+      const conflicts = new Set();
+      const arr = [...events].sort((a, b) => eventStartEpochMin(a) - eventStartEpochMin(b));
+      for (let i = 0; i < arr.length; i += 1) {
+        for (let j = i + 1; j < arr.length; j += 1) {
+          const aStart = eventStartEpochMin(arr[i]);
+          const aEnd = eventEndEpochMin(arr[i]);
+          const bStart = eventStartEpochMin(arr[j]);
+          const bEnd = eventEndEpochMin(arr[j]);
+          if (bStart >= aEnd) break;
+          if (aStart < bEnd && bStart < aEnd) {
+            conflicts.add(arr[i].id);
+            conflicts.add(arr[j].id);
+          }
+        }
+      }
+      return conflicts;
+    }
+
+    function onCreateTrip(e) {
+      e.preventDefault();
+      const title = document.getElementById("tripTitle").value.trim();
+      const destination = document.getElementById("tripDestination").value.trim();
+      const startDate = document.getElementById("tripStart").value;
+      const endDate = document.getElementById("tripEnd").value;
+      const currency = document.getElementById("tripCurrency").value;
+      const budget = Number(document.getElementById("tripBudget").value || 0);
+      if (!title || !destination || !startDate || !endDate) return;
+      if (new Date(endDate) < new Date(startDate)) {
+        alert("Дата окончания не может быть раньше начала.");
+        return;
+      }
+      const trip = { id: createId(), title, destination, startDate, endDate, currency, budget, events: [], expenses: [], ideas: [] };
+      state.trips.unshift(trip);
+      state.selectedTripId = trip.id;
+      saveState();
+      e.target.reset();
+      render();
+    }
+
+    function onCreateEvent(e) {
+      e.preventDefault();
+      const trip = getSelectedTrip();
+      if (!trip) return;
+      const title = document.getElementById("eventTitle").value.trim();
+      const date = document.getElementById("eventDate").value;
+      const startTime = document.getElementById("eventStartTime").value;
+      const endTime = document.getElementById("eventEndTime").value;
+      const type = document.getElementById("eventType").value;
+      const cover = document.getElementById("eventCover").value.trim();
+      const locationLabel = document.getElementById("eventLocationLabel").value.trim();
+      const coords = parseCoords(document.getElementById("eventCoords").value.trim());
+      const travelTimeMin = Number(document.getElementById("eventTravelTime").value || 0);
+      const notes = document.getElementById("eventNotes").value.trim();
+      if (!title || !date || !startTime || !endTime) return;
+      let endDate = date;
+      if (timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+        const d = new Date(date);
+        d.setDate(d.getDate() + 1);
+        endDate = toDateInput(d);
+      }
+      trip.events.push({ id: createId(), title, date, endDate, startTime, endTime, time: startTime, type, notes, cover, locationLabel, coords, travelTimeMin });
+      trip.events.sort((a, b) => eventStartEpochMin(a) - eventStartEpochMin(b));
+      saveState();
+      e.target.reset();
+      render();
+    }
+
+    function onCreateExpense(e) {
+      e.preventDefault();
+      const trip = getSelectedTrip();
+      if (!trip) return;
+      const note = document.getElementById("expenseNote").value.trim();
+      const date = document.getElementById("expenseDate").value;
+      const amount = Number(document.getElementById("expenseAmount").value || 0);
+      const category = document.getElementById("expenseCategory").value;
+      const currency = document.getElementById("expenseCurrency").value;
+      if (!note || !date || amount <= 0) return;
+      trip.expenses.push({ id: createId(), note, date, amount, category, currency });
+      trip.expenses.sort((a, b) => b.date.localeCompare(a.date));
+      saveState();
+      e.target.reset();
+      render();
+    }
+
+    function onDeleteTrip() {
+      const trip = getSelectedTrip();
+      if (!trip) return;
+      if (!window.confirm(`Удалить поездку "${trip.title}"?`)) return;
+      state.trips = state.trips.filter((t) => t.id !== trip.id);
+      state.selectedTripId = state.trips[0]?.id || null;
+      saveState();
+      render();
+    }
+
+    function deleteEvent(eventId) {
+      const trip = getSelectedTrip();
+      if (!trip) return;
+      trip.events = trip.events.filter((e) => e.id !== eventId);
+      saveState();
+      render();
+    }
+
+    function openEditModal(eventId) {
+      const trip = getSelectedTrip();
+      if (!trip) return;
+      const ev = trip.events.find((x) => x.id === eventId);
+      if (!ev) return;
+      document.getElementById("editEventId").value = ev.id;
+      document.getElementById("editEventTitle").value = ev.title || "";
+      document.getElementById("editEventDate").value = ev.date || "";
+      document.getElementById("editEventStart").value = getEventStart(ev);
+      document.getElementById("editEventEnd").value = getEventEnd(ev);
+      document.getElementById("editEventType").value = ev.type || "other";
+      document.getElementById("editEventLocation").value = ev.locationLabel || "";
+      document.getElementById("editEventCoords").value = ev.coords ? `${ev.coords.lat},${ev.coords.lng}` : "";
+      document.getElementById("editEventTravelTime").value = ev.travelTimeMin || "";
+      document.getElementById("editEventCover").value = ev.cover || "";
+      document.getElementById("editEventNotes").value = ev.notes || "";
+      eventEditModalEl.classList.remove("hidden");
+      eventEditModalEl.classList.add("flex");
+    }
+
+    function closeEditModal() {
+      eventEditModalEl.classList.add("hidden");
+      eventEditModalEl.classList.remove("flex");
+    }
+
+    function onSaveEditedEvent(e) {
+      e.preventDefault();
+      const trip = getSelectedTrip();
+      if (!trip) return;
+      const id = document.getElementById("editEventId").value;
+      const ev = trip.events.find((x) => x.id === id);
+      if (!ev) return;
+      const start = document.getElementById("editEventStart").value;
+      const end = document.getElementById("editEventEnd").value;
+      ev.title = document.getElementById("editEventTitle").value.trim();
+      ev.date = document.getElementById("editEventDate").value;
+      ev.endDate = ev.date;
+      if (timeToMinutes(end) <= timeToMinutes(start)) {
+        const d = new Date(ev.date);
+        d.setDate(d.getDate() + 1);
+        ev.endDate = toDateInput(d);
+      }
+      ev.startTime = start;
+      ev.endTime = end;
+      ev.time = start;
+      ev.type = document.getElementById("editEventType").value;
+      ev.locationLabel = document.getElementById("editEventLocation").value.trim();
+      ev.coords = parseCoords(document.getElementById("editEventCoords").value.trim());
+      ev.travelTimeMin = Number(document.getElementById("editEventTravelTime").value || 0);
+      ev.cover = document.getElementById("editEventCover").value.trim();
+      ev.notes = document.getElementById("editEventNotes").value.trim();
+      trip.events.sort((a, b) => eventStartEpochMin(a) - eventStartEpochMin(b));
+      closeEditModal();
+      saveState();
+      render();
+    }
+
+    function deleteExpense(expenseId) {
+      const trip = getSelectedTrip();
+      if (!trip) return;
+      trip.expenses = trip.expenses.filter((x) => x.id !== expenseId);
+      saveState();
+      render();
+    }
+
+    function addExpenseFromEvent(eventId) {
+      const trip = getSelectedTrip();
+      if (!trip) return;
+      const ev = trip.events.find((x) => x.id === eventId);
+      if (!ev) return;
+      const categoryMap = { flight: "Flights", hotel: "Hotel", food: "Food", transit: "Transport", activity: "Activity", other: "Other" };
+      document.getElementById("expenseNote").value = ev.title;
+      document.getElementById("expenseDate").value = ev.date || "";
+      document.getElementById("expenseCategory").value = categoryMap[ev.type] || "Other";
+      document.getElementById("expenseCurrency").value = trip.currency || "USD";
+      document.getElementById("expenseAmount").focus();
+      document.getElementById("expenseAmount").scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    function onExportData() {
+      const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `trip-planner-backup-${toDateInput(new Date())}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function onImportData(e) {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parsed = JSON.parse(String(reader.result || "{}"));
+          if (!parsed || !Array.isArray(parsed.trips)) throw new Error();
+          state = normalizeState(parsed);
+          saveState();
+          render();
+          alert("Импорт выполнен.");
+        } catch {
+          alert("Не удалось импортировать JSON.");
+        } finally {
+          e.target.value = "";
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function parseIcsDateTime(line) {
+  if (!line) return null;
+
+  const colonIndex = line.indexOf(":");
+  if (colonIndex === -1) return null;
+
+  const valueRaw = line.slice(colonIndex + 1).trim();
+  const isUTC = valueRaw.endsWith("Z");
+
+  if (isUTC) {
+    const year = valueRaw.slice(0, 4);
+    const month = valueRaw.slice(4, 6);
+    const day = valueRaw.slice(6, 8);
+    const hour = valueRaw.slice(9, 11);
+    const minute = valueRaw.slice(11, 13);
+    const second = valueRaw.slice(13, 15) || "00";
+
+    const utcDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
+
+    const y = utcDate.getFullYear();
+    const m = String(utcDate.getMonth() + 1).padStart(2, "0");
+    const d = String(utcDate.getDate()).padStart(2, "0");
+    const h = String(utcDate.getHours()).padStart(2, "0");
+    const min = String(utcDate.getMinutes()).padStart(2, "0");
+
+    return { date: `${y}-${m}-${d}`, time: `${h}:${min}` };
+  } else {
+    const m = valueRaw.match(/^(\d{4})(\d{2})(\d{2})T?(\d{2})?(\d{2})?/);
+    if (!m) return null;
+
+    const date = `${m[1]}-${m[2]}-${m[3]}`;
+    const hh = m[4] || "09";
+    const mm = m[5] || "00";
+
+    return { date, time: `${hh}:${mm}` };
+  }
+}
+
+    function onImportIcs(e) {
+      const trip = getSelectedTrip();
+      const file = e.target.files?.[0];
+      if (!trip || !file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const text = String(reader.result || "");
+          const chunks = text.split("BEGIN:VEVENT").slice(1);
+          let imported = 0;
+          chunks.forEach((chunk) => {
+            const section = chunk.split("END:VEVENT")[0] || "";
+            const getLine = (name) => {
+              const line = section.split(/\r?\n/).find((l) => l.startsWith(name));
+              if (!line) return "";
+              return line.slice(line.indexOf(":") + 1).trim();
+            };
+            const summary = getLine("SUMMARY") || "Событие";
+            const desc = getLine("DESCRIPTION");
+            const loc = getLine("LOCATION");
+const getFullLine = (name) => {
+  return section.split(/\r?\n/).find((l) => l.startsWith(name)) || "";
+};
+
+const dtStart = parseIcsDateTime(getFullLine("DTSTART"));
+const dtEnd = parseIcsDateTime(getFullLine("DTEND"));
+            if (!dtStart) return;
+            const endTime = dtEnd?.time || minutesToTime(timeToMinutes(dtStart.time) + 60);
+            trip.events.push({
+              id: createId(),
+              title: summary,
+              date: dtStart.date,
+              endDate: dtEnd?.date || dtStart.date,
+              startTime: dtStart.time,
+              endTime,
+              time: dtStart.time,
+              type: "other",
+              notes: desc || "",
+              cover: "",
+              locationLabel: loc || "",
+              coords: null,
+              travelTimeMin: 0
+            });
+            imported += 1;
+          });
+          trip.events.sort((a, b) => eventStartEpochMin(a) - eventStartEpochMin(b));
+          saveState();
+          render();
+          alert(`Импортировано событий из ICS: ${imported}`);
+        } catch {
+          alert("Ошибка импорта ICS.");
+        } finally {
+          e.target.value = "";
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function onClearAll() {
+      if (!confirm("Удалить все поездки и данные?")) return;
+      state = { trips: [], selectedTripId: null };
+      saveState();
+      render();
+    }
+
+    function renderTripList() {
+      tripCountEl.textContent = `${state.trips.length} шт`;
+      if (!state.trips.length) {
+        tripListEl.innerHTML = '<div class="text-sm text-white/50">Пока пусто</div>';
+        return;
+      }
+      tripListEl.innerHTML = state.trips.map((trip) => {
+        const active = trip.id === state.selectedTripId;
+        return `<button data-trip-id="${trip.id}" class="w-full text-left rounded-xl border px-3 py-2 ${active ? "border-blue-400 bg-blue-500/20" : "border-white/10 bg-white/5 hover:bg-white/10"}"><div class="font-semibold">${escapeHtml(trip.title)}</div><div class="text-xs text-white/60">${escapeHtml(trip.destination)} • ${trip.startDate} - ${trip.endDate}</div></button>`;
+      }).join("");
+      tripListEl.querySelectorAll("button[data-trip-id]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.selectedTripId = btn.dataset.tripId;
+          saveState();
+          render();
+        });
+      });
+    }
+
+    function initMapIfNeeded() {
+      if (map) return;
+      map = L.map("tripMap", { zoomControl: true });
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap" }).addTo(map);
+      markersLayer = L.layerGroup().addTo(map);
+      map.setView([48.8566, 2.3522], 4);
+      map.on("click", (ev) => {
+        document.getElementById("eventCoords").value = `${ev.latlng.lat.toFixed(6)},${ev.latlng.lng.toFixed(6)}`;
+      });
+    }
+
+    function renderTripMap(trip) {
+      initMapIfNeeded();
+      markersLayer.clearLayers();
+      if (routeLine) {
+        map.removeLayer(routeLine);
+        routeLine = null;
+      }
+      const points = trip.events.filter((e) => e.coords && Number.isFinite(e.coords.lat) && Number.isFinite(e.coords.lng)).sort((a, b) => eventStartEpochMin(a) - eventStartEpochMin(b));
+      mapEmptyEl.classList.toggle("hidden", points.length >= 2);
+      if (!points.length) {
+        map.setView([48.8566, 2.3522], 3);
+        return;
+      }
+      const latLngs = points.map((e) => [e.coords.lat, e.coords.lng]);
+      points.forEach((e, index) => {
+        const marker = L.marker([e.coords.lat, e.coords.lng]).addTo(markersLayer);
+        marker.bindPopup(`<b>${escapeHtml(e.title)}</b><br>${escapeHtml(e.date)} ${escapeHtml(getEventStart(e))}-${escapeHtml(getEventEnd(e))}<br>#${index + 1}`);
+      });
+      routeLine = L.polyline(latLngs, { color: "#60a5fa", weight: 4, opacity: 0.85 }).addTo(map);
+      map.fitBounds(routeLine.getBounds().pad(0.2));
+    }
+
+    function renderDayTimeline(trip) {
+      if (!trip) return;
+      if (!dayViewDateEl.value) dayViewDateEl.value = trip.startDate || toDateInput(new Date());
+      const day = dayViewDateEl.value;
+      if ((dayPeriodModeEl.value || "day") === "week") {
+        renderWeekTimeline(trip, day);
+        return;
+      }
+      const dayStartEpoch = new Date(`${day}T00:00:00`).getTime() / 60000;
+      const dayEndEpoch = dayStartEpoch + 24 * 60;
+      const dayEvents = trip.events
+        .filter((e) => {
+          const evStart = eventStartEpochMin(e);
+          const evEnd = eventEndEpochMin(e);
+          return evEnd > dayStartEpoch && evStart < dayEndEpoch;
+        })
+        .sort((a, b) => eventStartEpochMin(a) - eventStartEpochMin(b));
+      const conflicts = findConflicts(dayEvents);
+      if (!dayEvents.length && (!trip.ideas || !trip.ideas.length)) {
+        dayTimelineEl.innerHTML = '<div class="text-sm text-white/50">На этот день событий нет. Перетащите идею сверху или создайте событие!</div>';
+        return;
+      }
+      let START_HOUR = 6;
+      let END_HOUR = 24;
+      const mode = dayViewModeEl.value || "focus";
+      if (mode === "full") {
+        START_HOUR = 0;
+        END_HOUR = 24;
+      } else if (mode === "auto" && dayEvents.length > 0) {
+        const firstStart = Math.min(...dayEvents.map((e) => timeToMinutes(getEventStart(e))));
+        const lastEnd = Math.max(...dayEvents.map((e) => timeToMinutes(getEventEnd(e))));
+        START_HOUR = Math.max(0, Math.floor((firstStart - 60) / 60));
+        END_HOUR = Math.min(24, Math.ceil((lastEnd + 60) / 60));
+      }
+      const PX_PER_HOUR = currentTimelineZoom;
+      const MINUTE_PX = PX_PER_HOUR / 60;
+      const STEP_MIN = 15;
+      const totalHeight = (END_HOUR - START_HOUR) * PX_PER_HOUR;
+      const toY = (minute) => (minute - START_HOUR * 60) * MINUTE_PX;
+
+      const hourRows = [];
+      const quarterRows = [];
+      const hourLabels = [];
+      for (let h = START_HOUR; h <= END_HOUR; h += 1) {
+        const y = (h - START_HOUR) * PX_PER_HOUR;
+        hourRows.push(`<div class="day-hour-row" style="top:${y}px"></div>`);
+        if (h < END_HOUR) {
+          quarterRows.push(`<div class="day-quarter-row" style="top:${y + PX_PER_HOUR / 4}px"></div>`);
+          quarterRows.push(`<div class="day-quarter-row" style="top:${y + PX_PER_HOUR / 2}px"></div>`);
+          quarterRows.push(`<div class="day-quarter-row" style="top:${y + PX_PER_HOUR * 3 / 4}px"></div>`);
+        }
+        if (h < END_HOUR) hourLabels.push(`<div class="day-label" style="top:${y + 1}px">${String(h).padStart(2, "0")}:00</div>`);
+      }
+
+      const blocks = [];
+      for (let i = 0; i < dayEvents.length; i += 1) {
+        const ev = dayEvents[i];
+        const startLocal = Math.max(0, eventStartEpochMin(ev) - dayStartEpoch);
+        const endLocalRaw = Math.max(startLocal + 10, eventEndEpochMin(ev) - dayStartEpoch);
+        const start = Math.max(START_HOUR * 60, startLocal);
+        const endRaw = endLocalRaw;
+        const end = Math.min(END_HOUR * 60, Math.max(start + 10, endRaw));
+        const theme = eventTypeTheme(ev.type);
+        const top = toY(start);
+        const height = Math.max(34, (end - start) * MINUTE_PX);
+
+        if (ev.travelTimeMin > 0) {
+          const travelStart = start - ev.travelTimeMin;
+          const travelTop = toY(travelStart);
+          const travelHeight = ev.travelTimeMin * MINUTE_PX;
+          
+          blocks.push(`
+            <div class="travel-block" style="top:${travelTop}px;height:${travelHeight}px;">
+              <div class="text-[11px] text-white/50 flex items-center gap-1 mt-1">
+                <span class="mat" style="font-size: 14px;">directions_run</span>
+                Дорога: ${formatDuration(ev.travelTimeMin)}
+              </div>
+            </div>
+          `);
+        }
+
+        blocks.push(`
+          <div class="event-block js-day-event ${conflicts.has(ev.id) ? "event-conflict" : ""}" data-event-id="${ev.id}" style="top:${top}px;height:${height}px;">
+            <div class="event-resize event-resize-top" data-action="resize-top"></div>
+            <div class="flex items-start justify-between gap-2">
+              <div class="flex items-center gap-1.5 text-[13px] leading-tight">
+                <span class="mat">${theme.icon}</span>
+                <span class="font-semibold">${escapeHtml(ev.title)}</span>
+              </div>
+              <div class="text-[11px] text-cyan-200/80">${minutesToTime(start)} - ${minutesToTime(end)}</div>
+            </div>
+            ${ev.locationLabel ? `<div class="text-[11px] text-cyan-100/65 truncate">${escapeHtml(ev.locationLabel)}</div>` : ""}
+            <div class="event-resize event-resize-bottom" data-action="resize-bottom"></div>
+          </div>
+        `);
+      }
+
+      dayTimelineEl.innerHTML = `
+        <div class="day-grid-wrap">
+          <div class="px-3 py-2 text-sm font-semibold border-b border-white/10 bg-white/5">${formatDayLabel(day)} • ${day}</div>
+          <div class="relative" style="height:${totalHeight}px">
+            <div class="day-grid-bg">${hourRows.join("")}${quarterRows.join("")}</div>
+            <div class="day-time-col">${hourLabels.join("")}</div>
+            <div class="day-content-col" style="height:${totalHeight}px">${blocks.join("")}</div>
+          </div>
+        </div>
+      `;
+      bindDayTimelineInteractions(trip, day, START_HOUR, END_HOUR, MINUTE_PX, STEP_MIN);
+    }
+
+    function renderWeekTimeline(trip, dateRef) {
+      const ref = new Date(dateRef || toDateInput(new Date()));
+      const dayNum = (ref.getDay() + 6) % 7;
+      const monday = new Date(ref);
+      monday.setDate(ref.getDate() - dayNum);
+      const days = [];
+      for (let i = 0; i < 7; i += 1) {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        const key = toDateInput(d);
+        const dayStartEpoch = new Date(`${key}T00:00:00`).getTime() / 60000;
+        const dayEndEpoch = dayStartEpoch + 24 * 60;
+        const events = trip.events
+          .filter((e) => eventEndEpochMin(e) > dayStartEpoch && eventStartEpochMin(e) < dayEndEpoch)
+          .sort((a, b) => eventStartEpochMin(a) - eventStartEpochMin(b));
+        days.push({ key, label: d.toLocaleDateString("ru-RU", { weekday: "short", day: "2-digit", month: "2-digit" }), events });
+      }
+      dayTimelineEl.innerHTML = `
+        <div class="rounded-xl border border-white/10 overflow-hidden">
+          <div class="grid grid-cols-1 md:grid-cols-7 bg-white/5">
+            ${days.map((d) => `
+              <div class="border-r border-white/10 last:border-r-0 p-2 min-h-40">
+                <div class="text-xs text-white/60 mb-2">${escapeHtml(d.label)}</div>
+                <div class="space-y-1">
+                  ${d.events.length ? d.events.map((e) => `<button data-week-edit="${e.id}" class="w-full text-left rounded-md bg-white/10 hover:bg-white/20 px-2 py-1"><div class="text-[11px] text-white/70">${escapeHtml(getEventStart(e))}-${escapeHtml(getEventEnd(e))}</div><div class="text-xs truncate">${escapeHtml(e.title)}</div></button>`).join("") : '<div class="text-[11px] text-white/40">—</div>'}
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `;
+      dayTimelineEl.querySelectorAll("button[data-week-edit]").forEach((btn) => btn.addEventListener("click", () => openEditModal(btn.dataset.weekEdit)));
+    }
+
+    function bindDayTimelineInteractions(trip, day, startHour, endHour, minutePx, stepMin) {
+      const dayStart = startHour * 60;
+      const dayEnd = endHour * 60;
+      const blocks = dayTimelineEl.querySelectorAll(".js-day-event");
+      const dayStartEpoch = new Date(`${day}T00:00:00`).getTime() / 60000;
+      const dayEndEpoch = dayStartEpoch + 24 * 60;
+      const eventsById = new Map(
+        trip.events
+          .filter((e) => eventEndEpochMin(e) > dayStartEpoch && eventStartEpochMin(e) < dayEndEpoch)
+          .map((e) => [e.id, e])
+      );
+      
+      blocks.forEach((block) => {
+        block.addEventListener("mousedown", (ev) => {
+          ev.preventDefault();
+          const eventId = block.dataset.eventId;
+          const targetEvent = eventsById.get(eventId);
+          if (!targetEvent) return;
+          const action = ev.target?.dataset?.action || "move";
+          const origStart = timeToMinutes(getEventStart(targetEvent));
+          const origEnd = timeToMinutes(getEventEnd(targetEvent));
+          const minDuration = 10;
+          const startY = ev.clientY;
+
+          function onMove(moveEv) {
+            const deltaPx = moveEv.clientY - startY;
+            const deltaMin = Math.round((deltaPx / minutePx) / stepMin) * stepMin;
+            let newStart = origStart;
+            let newEnd = origEnd;
+            if (action === "move") {
+              const duration = origEnd - origStart;
+              newStart = Math.max(dayStart, Math.min(dayEnd - duration, origStart + deltaMin));
+              newEnd = newStart + duration;
+            } else if (action === "resize-top") {
+              newStart = Math.max(dayStart, Math.min(origEnd - minDuration, origStart + deltaMin));
+            } else if (action === "resize-bottom") {
+              newEnd = Math.min(dayEnd, Math.max(origStart + minDuration, origEnd + deltaMin));
+            }
+            targetEvent.startTime = minutesToTime(newStart);
+            targetEvent.endTime = minutesToTime(newEnd);
+            targetEvent.time = targetEvent.startTime;
+            renderDayTimeline(trip);
+          }
+
+          function onUp() {
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+            trip.events.sort((a, b) => eventStartEpochMin(a) - eventStartEpochMin(b));
+            saveState();
+            renderPanel();
+          }
+
+          document.addEventListener("mousemove", onMove);
+          document.addEventListener("mouseup", onUp);
+        });
+      });
+
+      // --- ЛОГИКА DROP ДЛЯ ИДЕЙ НА ТАЙМЛАЙН ---
+      const gridContainer = dayTimelineEl.querySelector('.day-content-col');
+      if (gridContainer) {
+        gridContainer.addEventListener('dragover', (e) => {
+          e.preventDefault(); 
+          gridContainer.classList.add('drag-over'); 
+        });
+
+        gridContainer.addEventListener('dragleave', () => {
+          gridContainer.classList.remove('drag-over');
+        });
+
+        gridContainer.addEventListener('drop', (e) => {
+          e.preventDefault();
+          gridContainer.classList.remove('drag-over');
+          
+          const ideaId = e.dataTransfer.getData('text/plain');
+          if (!ideaId) return;
+
+          const ideaIndex = trip.ideas.findIndex(i => i.id === ideaId);
+          if (ideaIndex === -1) return;
+          const idea = trip.ideas[ideaIndex];
+
+          const rect = gridContainer.getBoundingClientRect();
+          const y = e.clientY - rect.top;
+          
+          const droppedMinutes = Math.floor(y / minutePx) + (startHour * 60);
+          const snappedMinutes = Math.round(droppedMinutes / stepMin) * stepMin;
+          const finalMinutes = Math.max(startHour * 60, Math.min((endHour * 60) - idea.durationMin, snappedMinutes));
+
+          const newEvent = {
+            id: createId(),
+            title: idea.title,
+            date: dayViewDateEl.value,
+            endDate: dayViewDateEl.value,
+            startTime: minutesToTime(finalMinutes),
+            endTime: minutesToTime(finalMinutes + idea.durationMin),
+            time: minutesToTime(finalMinutes),
+            type: "Другое",
+            notes: "",
+            cover: "",
+            locationLabel: "",
+            coords: null,
+            travelTimeMin: 0
+          };
+
+          trip.events.push(newEvent);
+          trip.ideas.splice(ideaIndex, 1); 
+          trip.events.sort((a, b) => eventStartEpochMin(a) - eventStartEpochMin(b));
+          
+          saveState();
+          renderPanel();
+        });
+      }
+    }
+
+    function renderPanel() {
+      const trip = getSelectedTrip();
+      if (!trip) {
+        emptyStateEl.classList.remove("hidden");
+        tripPanelEl.classList.add("hidden");
+        return;
+      }
+      emptyStateEl.classList.add("hidden");
+      tripPanelEl.classList.remove("hidden");
+
+      const spent = trip.expenses.reduce((sum, x) => sum + convertCurrency(Number(x.amount || 0), x.currency || trip.currency, trip.currency), 0);
+      const left = Number(trip.budget || 0) - spent;
+      const conflictIds = findConflicts(trip.events);
+      panelTitleEl.textContent = trip.title;
+      panelMetaEl.textContent = `${trip.destination} • ${trip.startDate} - ${trip.endDate} • ${trip.currency}`;
+      budgetValueEl.textContent = money(trip.budget, trip.currency);
+      spentValueEl.textContent = money(spent, trip.currency);
+      leftValueEl.textContent = money(left, trip.currency);
+      leftValueEl.className = `text-xl font-semibold ${left < 0 ? "text-red-400" : "text-emerald-400"}`;
+
+      // --- ОТРИСОВКА ИДЕЙ ---
+      const ideasListEl = document.getElementById("ideasList");
+      if (!trip.ideas || !trip.ideas.length) {
+        ideasListEl.innerHTML = '<div class="text-sm text-white/40 w-full text-center py-2">Пусто. Напишите идею и перетащите её в расписание ниже 👇</div>';
+      } else {
+        ideasListEl.innerHTML = trip.ideas.map(idea => `
+          <div draggable="true" data-idea-id="${idea.id}" class="idea-item bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg px-3 py-1.5 text-sm flex items-center gap-2 shadow-lg">
+            <span class="mat text-white/50" style="font-size:16px">drag_indicator</span>
+            ${escapeHtml(idea.title)}
+            <button data-del-idea="${idea.id}" class="text-white/40 hover:text-red-400 ml-1 transition-colors">✕</button>
+          </div>
+        `).join("");
+      }
+
+      ideasListEl.querySelectorAll('button[data-del-idea]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          trip.ideas = trip.ideas.filter(i => i.id !== btn.dataset.delIdea);
+          saveState();
+          renderPanel();
+        });
+      });
+
+      ideasListEl.querySelectorAll('.idea-item').forEach(item => {
+        item.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', item.dataset.ideaId);
+          e.dataTransfer.effectAllowed = 'move';
+        });
+      });
+      // -----------------------
+
+      if (!trip.events.length) {
+        eventListEl.innerHTML = '<div class="text-sm text-white/50">Событий пока нет</div>';
+      } else {
+        eventListEl.innerHTML = `<div class="relative pl-12 space-y-4 before:content-[''] before:absolute before:left-4 before:top-2 before:bottom-2 before:w-px before:bg-white/20">
+          ${trip.events.map((e) => `
+          <div class="relative">
+            <div class="absolute -left-12 top-2 w-8 h-8 rounded-full ${eventTypeTheme(e.type).chip} flex items-center justify-center border border-white/20">
+              <span class="mat">${eventTypeTheme(e.type).icon}</span>
+            </div>
+            <div class="rounded-xl border ${conflictIds.has(e.id) ? "border-red-400/60" : "border-white/10"} bg-white/5 p-3">
+              <div class="flex items-start justify-between gap-3">
+                <div><div class="font-semibold">${escapeHtml(e.title)}</div><div class="text-xs text-white/60">${e.date}${getEventEndDate(e)!==e.date?` → ${getEventEndDate(e)}`:""} ${escapeHtml(getEventStart(e))}-${escapeHtml(getEventEnd(e))} • ${escapeHtml(e.type)}</div></div>
+                <div class="text-right text-xs text-white/50">${formatDayLabel(e.date)}</div>
+              </div>
+              ${e.cover ? `<img src="${escapeHtml(e.cover)}" alt="cover" class="mt-2 h-28 w-full object-cover rounded-lg border border-white/10" onerror="this.style.display='none'" />` : ""}
+              ${e.locationLabel ? `<div class="mt-2 text-xs text-white/70">Локация: ${escapeHtml(e.locationLabel)} ${e.coords ? `(${e.coords.lat.toFixed(4)}, ${e.coords.lng.toFixed(4)})` : ""}</div>` : ""}
+              ${e.notes ? `<div class="text-sm text-white/70 mt-2">${escapeHtml(e.notes)}</div>` : ""}
+              <div class="text-xs text-white/50 mt-1">Длительность: ${formatDuration(timeToMinutes(getEventEnd(e)) - timeToMinutes(getEventStart(e)))}${e.travelTimeMin ? ` | На дорогу заложено: ${formatDuration(e.travelTimeMin)}` : ""}</div>
+              ${conflictIds.has(e.id) ? `<div class="text-xs text-red-300 mt-1">Конфликт по времени с другим событием</div>` : ""}
+              <div class="flex flex-wrap gap-2 mt-3">
+                <button data-add-expense-event="${e.id}" class="rounded-lg bg-blue-600/80 hover:bg-blue-500 px-2 py-1 text-xs">Добавить расход из события</button>
+                <button data-edit-event="${e.id}" class="rounded-lg bg-white/20 hover:bg-white/30 px-2 py-1 text-xs">Редактировать</button>
+                <button data-del-event="${e.id}" class="rounded-lg bg-red-600/70 hover:bg-red-500 px-2 py-1 text-xs">Удалить</button>
+              </div>
+            </div>
+          </div>`).join("")}
+        </div>`;
+      }
+
+      if (!trip.expenses.length) {
+        expenseListEl.innerHTML = '<div class="text-sm text-white/50">Расходов пока нет</div>';
+      } else {
+        expenseListEl.innerHTML = trip.expenses.map((x) => `
+          <div class="rounded-xl border border-white/10 bg-white/5 p-3 flex items-start justify-between gap-3">
+            <div><div class="font-semibold">${escapeHtml(x.note)}</div><div class="text-xs text-white/60">${x.date} • ${escapeHtml(x.category)} • ${x.currency || trip.currency}</div></div>
+            <div class="text-right"><div class="font-semibold">${money(convertCurrency(x.amount, x.currency || trip.currency, trip.currency), trip.currency)}</div><div class="text-xs text-white/50">${money(x.amount, x.currency || trip.currency)}</div><button data-del-expense="${x.id}" class="text-red-400 text-sm hover:text-red-300">Удалить</button></div>
+          </div>
+        `).join("");
+      }
+
+      eventListEl.querySelectorAll("button[data-del-event]").forEach((btn) => btn.addEventListener("click", () => deleteEvent(btn.dataset.delEvent)));
+      eventListEl.querySelectorAll("button[data-edit-event]").forEach((btn) => btn.addEventListener("click", () => openEditModal(btn.dataset.editEvent)));
+      eventListEl.querySelectorAll("button[data-add-expense-event]").forEach((btn) => btn.addEventListener("click", () => addExpenseFromEvent(btn.dataset.addExpenseEvent)));
+      expenseListEl.querySelectorAll("button[data-del-expense]").forEach((btn) => btn.addEventListener("click", () => deleteExpense(btn.dataset.delExpense)));
+
+      document.getElementById("expenseCurrency").value = trip.currency || "USD";
+      
+      renderTripMap(trip);
+      renderDayTimeline(trip);
+    }
+
+    function render() {
+      if (!state.selectedTripId && state.trips[0]) state.selectedTripId = state.trips[0].id;
+      renderTripList();
+      renderPanel();
+      saveState();
+    }
+ // === КОД ДЛЯ ЭКСПОРТА В PDF (Генерация из данных + Шкала по дням + Сводка бюджета) ===
+document.getElementById("exportPdfBtn").addEventListener("click", () => {
+    const trip = getSelectedTrip();
+    if (!trip) return;
+
+    const container = document.createElement("div");
+    container.style.fontFamily = "Arial, sans-serif";
+    container.style.color = "#000";
+    container.style.background = "#fff";
+    container.style.width = "800px"; 
+    container.style.padding = "20px";
+
+    const eventsByDay = {};
+    trip.events.forEach(e => {
+        const d = e.date || trip.startDate;
+        if (!eventsByDay[d]) eventsByDay[d] = [];
+        eventsByDay[d].push(e);
+    });
+
+    const sortedDays = Object.keys(eventsByDay).sort();
+
+    let timelineHtml = "";
+    if (sortedDays.length === 0) {
+        timelineHtml = '<p style="color: #64748b;">Событий пока нет.</p>';
+    } else {
+        sortedDays.forEach(day => {
+            const dateObj = new Date(day);
+            const dayString = isNaN(dateObj) ? day : dateObj.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" });
+
+            timelineHtml += `
+            <div style="margin-bottom: 25px; page-break-inside: auto;">
+              <h3 style="background: #f1f5f9; padding: 10px 15px; border-radius: 8px; margin: 0 0 15px 0; font-size: 18px; color: #0f172a; border-left: 4px solid #3b82f6; page-break-after: avoid;">
+                📅 ${dayString}
+              </h3>
+              <div style="padding-left: 20px; border-left: 2px solid #e2e8f0; margin-left: 10px;">
+          `;
+
+            const dayEvents = eventsByDay[day].sort((a, b) => timeToMinutes(getEventStart(a)) - timeToMinutes(getEventStart(b)));
+
+            dayEvents.forEach(e => {
+                timelineHtml += `
+              <div style="position: relative; margin-bottom: 20px; padding-left: 15px; page-break-inside: avoid;">
+                <div style="position: absolute; left: -26px; top: 4px; width: 10px; height: 10px; background: #fff; border: 3px solid #3b82f6; border-radius: 50%;"></div>
+                <div style="font-size: 13px; color: #64748b; font-weight: bold; margin-bottom: 4px;">
+                  ${escapeHtml(getEventStart(e))} — ${escapeHtml(getEventEnd(e))}
+                </div>
+                <div style="font-size: 16px; font-weight: bold; color: #1e293b; margin-bottom: 4px; word-break: break-word; white-space: pre-wrap; overflow-wrap: break-word;">
+                  ${escapeHtml(e.title)}
+                 <span style="font-size: 11px; font-weight: normal; color: #475569; background: #e2e8f0; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle; display: inline-block; max-width: 100%; word-break: break-word;">${escapeHtml(e.type)}</span>
+                </div>
+                ${e.locationLabel ? `<div style="font-size: 13px; color: #475569; margin-bottom: 4px; word-break: break-word; white-space: pre-wrap; overflow-wrap: break-word;">📍 ${escapeHtml(e.locationLabel)}</div>` : ""}
+                ${e.notes ? `<div style="font-size: 13px; color: #64748b; font-style: italic; word-break: break-word; white-space: pre-wrap; overflow-wrap: break-word;">${escapeHtml(e.notes)}</div>` : ""}
+              </div>
+            `;
+            });
+
+            timelineHtml += `
+              </div>
+            </div>
+          `;
+        });
+    }
+
+    const spent = trip.expenses.reduce((sum, x) => sum + convertCurrency(Number(x.amount || 0), x.currency || trip.currency, trip.currency), 0);
+    const left = Number(trip.budget || 0) - spent;
+
+    const expensesHtml = trip.expenses.map(x => `
+        <tr style="border-bottom: 1px solid #e2e8f0;">
+          <td style="padding: 10px 4px; font-size: 14px; color: #334155; vertical-align: top;">${x.date}</td>
+          <td style="padding: 10px 4px; font-size: 14px; color: #0f172a; font-weight: 500; vertical-align: top; word-break: break-word; white-space: pre-wrap; overflow-wrap: break-word;">${escapeHtml(x.note)}</td>
+          <td style="padding: 10px 4px; font-size: 14px; color: #64748b; vertical-align: top; word-break: break-word; white-space: pre-wrap; overflow-wrap: break-word;">${escapeHtml(x.category)}</td>
+          <td style="padding: 10px 4px; font-size: 14px; text-align: right; font-weight: bold; color: #0f172a; vertical-align: top;">
+            ${money(x.amount, x.currency || trip.currency)}
+          </td>
+        </tr>
+      `).join("");
+
+    container.innerHTML = `
+        <style>
+  * {
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+    word-wrap: break-word !important;
+  }
+
+  div, span, p, td, th {
+    max-width: 100% !important;
+  }
+
+  table {
+    table-layout: fixed !important;
+    width: 100% !important;
+  }
+
+  td, th {
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+    white-space: pre-wrap !important;
+  }
+</style>
+        <div style="border-bottom: 2px solid #cbd5e1; padding-bottom: 15px; margin-bottom: 25px;">
+          <h1 style="margin: 0 0 8px 0; font-size: 32px; color: #0f172a;">${escapeHtml(trip.title)}</h1>
+          <div style="font-size: 16px; color: #64748b;">
+            🌍 ${escapeHtml(trip.destination)} &nbsp; | &nbsp; 🗓 ${trip.startDate} — ${trip.endDate}
+          </div>
+        </div>
+
+        <h2 style="font-size: 22px; margin-bottom: 20px; color: #0f172a;">Программа поездки</h2>
+        ${timelineHtml}
+
+        <div style="page-break-before: always;">
+          <h2 style="font-size: 22px; margin-bottom: 20px; color: #0f172a;">Бюджет и Расходы</h2>
+          
+          <div style="display: flex; gap: 15px; margin-bottom: 25px;">
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 8px; flex: 1;">
+              <div style="color: #64748b; font-size: 13px; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">Общий бюджет</div>
+              <div style="font-size: 20px; font-weight: bold; color: #0f172a;">${money(trip.budget, trip.currency)}</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 8px; flex: 1;">
+              <div style="color: #64748b; font-size: 13px; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">Потрачено</div>
+              <div style="font-size: 20px; font-weight: bold; color: #0f172a;">${money(spent, trip.currency)}</div>
+            </div>
+            <div style="background: ${left < 0 ? '#fef2f2' : '#f0fdf4'}; border: 1px solid ${left < 0 ? '#fecaca' : '#bbf7d0'}; padding: 15px; border-radius: 8px; flex: 1;">
+              <div style="color: ${left < 0 ? '#ef4444' : '#22c55e'}; font-size: 13px; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">Остаток</div>
+              <div style="font-size: 20px; font-weight: bold; color: ${left < 0 ? '#ef4444' : '#16a34a'};">${money(left, trip.currency)}</div>
+            </div>
+          </div>
+
+          ${trip.expenses.length ? `
+            <table style="width: 100%; border-collapse: collapse; table-layout: fixed;">
+              <colgroup>
+                <col style="width: 15%;">
+                <col style="width: 45%;">
+                <col style="width: 20%;">
+                <col style="width: 20%;">
+              </colgroup>
+              <thead>
+                <tr style="border-bottom: 2px solid #cbd5e1; text-align: left;">
+                  <th style="padding: 10px 4px; font-size: 13px; color: #64748b; font-weight: bold;">Дата</th>
+                  <th style="padding: 10px 4px; font-size: 13px; color: #64748b; font-weight: bold;">Описание</th>
+                  <th style="padding: 10px 4px; font-size: 13px; color: #64748b; font-weight: bold;">Категория</th>
+                  <th style="padding: 10px 4px; font-size: 13px; color: #64748b; font-weight: bold; text-align: right;">Сумма</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${expensesHtml}
+              </tbody>
+            </table>
+          ` : '<p style="color: #64748b;">Расходов пока нет.</p>'}
+        </div>
+      `;
+
+    const opt = {
+        margin: [15, 15, 15, 15],
+        filename: `Маршрут_${trip.title}.pdf`,
+        image: { type: 'jpeg', quality: 1 },
+        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(container).save();
+});
+// === КОНЕЦ КОДА ДЛЯ PDF ===
+  </script>
+</body>
+</html>
