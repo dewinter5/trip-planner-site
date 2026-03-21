@@ -22,6 +22,11 @@ Trip Planner Local — это легковесное, быстрое и полн
   - Импорт бронирований из стандартых календарей (.ics).
   - Сохранение маршрута и сводки бюджета в красивый PDF.
   - Быстрое копирование расписания на день в формате текста (идеально для Telegram/WhatsApp).
+<img width="681" height="1075" alt="Снимок экрана 2026-03-21 в 23 40 18" src="https://github.com/user-attachments/assets/b960f23c-c5fc-40ac-be48-edd306984773" />
+
+<img width="681" height="1304" alt="Снимок экрана 2026-03-21 в 23 39 59" src="https://github.com/user-attachments/assets/07e2b69b-09a8-406d-9abc-df7b774bc365" />
+
+<img width="780" height="1314" alt="Снимок экрана 2026-03-21 в 23 39 42" src="https://github.com/user-attachments/assets/2a9ecb3a-2ddc-4ca5-84e6-b46f362dee46" />
 
 ## Как использовать (Установка на смартфон)
 
